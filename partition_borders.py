@@ -4,6 +4,8 @@ from shapely.ops import unary_union
 from shapely.geometry import MultiLineString
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.patches import Patch
+from matplotlib.lines import Line2D
 
 # Input paths
 EUROPE_PATH = r"E:\git_projects\mosaic_gis_europe_1900-2003\01 Europe Main\Europe_1900_v.1.1.shp"
@@ -106,7 +108,6 @@ def main():
 
     # ----------------------------------------------------------------------
     # 2. POLAND UNION, CLIP EMPIRES TO POLAND, AND PLOT PARTITIONS
-    #    (UNION OF DISTRICTS + THREE PARTITION POLYGONS, DIFFERENT COLORS)
     # ----------------------------------------------------------------------
 
     # Union of districts to get a single Poland geometry
@@ -154,7 +155,6 @@ def main():
     # ----------------------------------------------------------------------
     # 2a. ASSIGN EACH DISTRICT TO A PARTITION (BY CENTROID)
     # ----------------------------------------------------------------------
-    # Centroids are used to determine which partition each district belonged to.
     centroids = poland_districts.geometry.centroid
 
     poland_districts["former_german_partition"] = centroids.within(germany_part_poly)
@@ -162,7 +162,7 @@ def main():
     poland_districts["former_ah_partition"] = centroids.within(ah_part_poly)
 
     # ----------------------------------------------------------------------
-    # 3. INTERNAL PARTITION BORDERS (LINES ONLY) AND DISTANCES
+    # 3. INTERNAL PARTITION BORDERS (LINES ONLY) - FULL
     # ----------------------------------------------------------------------
 
     # Borders (line geometries) of each partition polygon inside Poland
@@ -179,7 +179,7 @@ def main():
     ah_ru_ml = to_multilines(ah_ru_raw)
     ge_ru_ml = to_multilines(ge_ru_raw)
 
-    # GeoDataFrame with internal partition borders (lines only)
+    # GeoDataFrame with internal partition borders (lines only) - FULL
     rows = []
     if ah_ge_ml is not None:
         rows.append({"between": "Austria-Hungary–Germany", "geometry": ah_ge_ml})
@@ -191,47 +191,67 @@ def main():
     if not rows:
         raise RuntimeError("No internal partition borders were generated – check country codes and clipping.")
 
-    partitions_borders = gpd.GeoDataFrame(rows, crs=TARGET_CRS)
+    partitions_borders_full = gpd.GeoDataFrame(rows, crs=TARGET_CRS)
 
-    # Save only the internal partition borders (lines) to a shapefile
-    partitions_borders.to_file(PARTITIONS_BORDERS_PATH)
-    print(f"Saved partition borders within Poland (lines only) to: {PARTITIONS_BORDERS_PATH}")
+    # ----------------------------------------------------------------------
+    # 3a. TRIM PARTITION BORDERS NEAR EXTERNAL POLAND BORDER (5 KM BUFFER)
+    # ----------------------------------------------------------------------
+    poland_border_full = poland_union_gdf.boundary.unary_union
+    buffer_5km = poland_border_full.buffer(5000)  # CRS is in meters
 
-    # For distance calculations: union of lines for each empire
-    # Germany: borders with Austria-Hungary and Russia
-    germany_line_geoms = []
-    if ah_ge_ml is not None:
-        germany_line_geoms.append(ah_ge_ml)
-    if ge_ru_ml is not None:
-        germany_line_geoms.append(ge_ru_ml)
+    trimmed_geoms = []
+    between_vals = []
+
+    for between, geom in zip(partitions_borders_full["between"], partitions_borders_full.geometry):
+        if geom is None or geom.is_empty:
+            continue
+        diff = geom.difference(buffer_5km)
+        diff_ml = to_multilines(diff)
+        if diff_ml is None or diff_ml.is_empty:
+            continue
+        trimmed_geoms.append(diff_ml)
+        between_vals.append(between)
+
+    if not trimmed_geoms:
+        raise RuntimeError("After trimming, no internal partition borders remain. Check buffer size or geometries.")
+
+    partitions_borders_trimmed = gpd.GeoDataFrame(
+        {"between": between_vals, "geometry": trimmed_geoms},
+        crs=TARGET_CRS
+    )
+
+    # Save only the trimmed internal partition borders (lines) to a shapefile
+    partitions_borders_trimmed.to_file(PARTITIONS_BORDERS_PATH)
+    print(f"Saved trimmed partition borders within Poland (lines only) to: {PARTITIONS_BORDERS_PATH}")
+
+    # ----------------------------------------------------------------------
+    # 3b. PREPARE LINES FOR DISTANCE CALCULATIONS (USING TRIMMED BORDERS)
+    # ----------------------------------------------------------------------
+    germany_line_geoms = partitions_borders_trimmed.loc[
+        partitions_borders_trimmed["between"].isin(["Austria-Hungary–Germany", "Germany–Russia"]),
+        "geometry"
+    ].tolist()
     germany_border_lines = unary_union(germany_line_geoms) if germany_line_geoms else None
 
-    # Russia: borders with Germany and Austria-Hungary
-    russia_line_geoms = []
-    if ge_ru_ml is not None:
-        russia_line_geoms.append(ge_ru_ml)
-    if ah_ru_ml is not None:
-        russia_line_geoms.append(ah_ru_ml)
+    russia_line_geoms = partitions_borders_trimmed.loc[
+        partitions_borders_trimmed["between"].isin(["Germany–Russia", "Austria-Hungary–Russia"]),
+        "geometry"
+    ].tolist()
     russia_border_lines = unary_union(russia_line_geoms) if russia_line_geoms else None
 
-    # Austria-Hungary: borders with Germany and Russia
-    ah_line_geoms = []
-    if ah_ge_ml is not None:
-        ah_line_geoms.append(ah_ge_ml)
-    if ah_ru_ml is not None:
-        ah_line_geoms.append(ah_ru_ml)
+    ah_line_geoms = partitions_borders_trimmed.loc[
+        partitions_borders_trimmed["between"].isin(["Austria-Hungary–Germany", "Austria-Hungary–Russia"]),
+        "geometry"
+    ].tolist()
     ah_border_lines = unary_union(ah_line_geoms) if ah_line_geoms else None
 
     # ----------------------------------------------------------------------
-    # DISTANCE TO INTERNAL BORDERS (USING CENTROIDS ALREADY COMPUTED)
+    # DISTANCE TO INTERNAL BORDERS (USING CENTROIDS AND TRIMMED LINES)
     # ----------------------------------------------------------------------
-
-    # Initialize distance columns with NaN
     poland_districts["distance_to_german_border"] = np.nan
     poland_districts["distance_to_russian_border"] = np.nan
     poland_districts["distance_to_AH_border"] = np.nan
 
-    # Distances in kilometers to internal borders only
     if germany_border_lines is not None:
         poland_districts["distance_to_german_border"] = centroids.distance(germany_border_lines) / 1000.0
     if russia_border_lines is not None:
@@ -273,26 +293,38 @@ def main():
     plt.close(fig)
 
     # ----------------------------------------------------------------------
-    # 5. MAP: DISTRICTS COLORED BY PARTITION + RED PARTITION BORDER
+    # 5. MAP: DISTRICTS COLORED BY PARTITION +
+    #         BLACK FULL BORDER + RED TRIMMED BORDER
     # ----------------------------------------------------------------------
     fig, ax = plt.subplots(figsize=(10, 10))
 
-    # Three subsets of districts by former partition (based on centroid)
     german_districts = poland_districts[poland_districts["former_german_partition"]]
     russian_districts = poland_districts[poland_districts["former_russian_partition"]]
     ah_districts = poland_districts[poland_districts["former_ah_partition"]]
 
-    # Light/medium/dark grey for AH / Germany / Russia
-    ah_districts.plot(ax=ax, facecolor="#D9D9D9", edgecolor="black", linewidth=0.3, label="Austria-Hungary")
-    german_districts.plot(ax=ax, facecolor="#A6A6A6", edgecolor="black", linewidth=0.3, label="Germany")
-    russian_districts.plot(ax=ax, facecolor="#737373", edgecolor="black", linewidth=0.3, label="Russia")
+    ah_districts.plot(ax=ax, facecolor="#D9D9D9", edgecolor="black", linewidth=0.3)
+    german_districts.plot(ax=ax, facecolor="#A6A6A6", edgecolor="black", linewidth=0.3)
+    russian_districts.plot(ax=ax, facecolor="#737373", edgecolor="black", linewidth=0.3)
 
-    # Partition borders in bold red
-    partitions_borders.plot(ax=ax, color="red", linewidth=2.0, label="Partition borders")
+    # Full internal partition borders in bold black (background)
+    partitions_borders_full.plot(ax=ax, color="black", linewidth=2.0)
 
-    ax.set_title("Districts by former partition with partition borders", fontsize=14)
+    # Trimmed partition borders in bold red (on top)
+    partitions_borders_trimmed.plot(ax=ax, color="red", linewidth=2.0)
+
+    ax.set_title("Districts by former partition with full and trimmed partition borders", fontsize=14)
     ax.set_axis_off()
-    ax.legend()
+
+    # Custom legend (no geopandas warnings)
+    legend_handles = [
+        Patch(facecolor="#D9D9D9", edgecolor="black", label="Austria-Hungary"),
+        Patch(facecolor="#A6A6A6", edgecolor="black", label="Germany"),
+        Patch(facecolor="#737373", edgecolor="black", label="Russia"),
+        Line2D([0], [0], color="black", linewidth=2, label="Partition borders (full)"),
+        Line2D([0], [0], color="red", linewidth=2, label="Partition borders (>5 km away from Polish borders)"),
+    ]
+    ax.legend(handles=legend_handles, loc="lower left")
+
     plt.tight_layout()
     fig.savefig(FIG_DISTRICTS_PARTITIONS, dpi=300)
     plt.close(fig)
