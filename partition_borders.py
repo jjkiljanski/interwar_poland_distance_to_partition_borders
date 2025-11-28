@@ -7,7 +7,7 @@ import numpy as np
 
 # Input paths
 EUROPE_PATH = r"E:\git_projects\mosaic_gis_europe_1900-2003\01 Europe Main\Europe_1900_v.1.1.shp"
-POLAND_DISTRICTS_PATH = r"E:\git_projects\districts_1934_10_1.geojson"
+POLAND_DISTRICTS_PATH = r"districts_1934_10_1.geojson"
 
 # Output folder (relative)
 OUTPUT_DIR = "output"
