@@ -19,6 +19,7 @@ DISTRICTS_WITH_DIST_CSV = os.path.join(OUTPUT_DIR, "districts_with_partition_dis
 FIG_EMPIRES_EUROPE = os.path.join(OUTPUT_DIR, "empires_europe.png")
 FIG_POLAND_PARTITIONS = os.path.join(OUTPUT_DIR, "poland_partitions.png")
 FIG_DISTANCES = os.path.join(OUTPUT_DIR, "distances_to_borders.png")
+FIG_DISTRICTS_PARTITIONS = os.path.join(OUTPUT_DIR, "districts_partitions.png")
 
 # CRS in meters (for distance calculations)
 TARGET_CRS = "EPSG:3035"  # ETRS89 / LAEA Europe
@@ -103,7 +104,6 @@ def main():
     fig.savefig(FIG_EMPIRES_EUROPE, dpi=300)
     plt.close(fig)
 
-
     # ----------------------------------------------------------------------
     # 2. POLAND UNION, CLIP EMPIRES TO POLAND, AND PLOT PARTITIONS
     #    (UNION OF DISTRICTS + THREE PARTITION POLYGONS, DIFFERENT COLORS)
@@ -136,13 +136,13 @@ def main():
     # Poland outline
     poland_union_gdf.boundary.plot(ax=ax, linewidth=0.8, edgecolor="black")
 
-    # Partition polygons in different colors
+    # Partition polygons in different colors (three greys)
     germany_part_gdf.plot(ax=ax, alpha=0.6, edgecolor="black",
-                        facecolor="#A6A6A6", label="Germany")
+                          facecolor="#A6A6A6", label="Germany")
     russia_part_gdf.plot(ax=ax, alpha=0.6, edgecolor="black",
-                        facecolor="#737373", label="Russia")
+                         facecolor="#737373", label="Russia")
     ah_part_gdf.plot(ax=ax, alpha=0.6, edgecolor="black",
-                    facecolor="#D9D9D9", label="Austria-Hungary")
+                     facecolor="#D9D9D9", label="Austria-Hungary")
 
     ax.set_title("Poland partitioned between Austria-Hungary, Germany and Russia", fontsize=14)
     ax.legend()
@@ -150,6 +150,16 @@ def main():
     plt.tight_layout()
     fig.savefig(FIG_POLAND_PARTITIONS, dpi=300)
     plt.close(fig)
+
+    # ----------------------------------------------------------------------
+    # 2a. ASSIGN EACH DISTRICT TO A PARTITION (BY CENTROID)
+    # ----------------------------------------------------------------------
+    # Centroids are used to determine which partition each district belonged to.
+    centroids = poland_districts.geometry.centroid
+
+    poland_districts["former_german_partition"] = centroids.within(germany_part_poly)
+    poland_districts["former_russian_partition"] = centroids.within(russia_part_poly)
+    poland_districts["former_ah_partition"] = centroids.within(ah_part_poly)
 
     # ----------------------------------------------------------------------
     # 3. INTERNAL PARTITION BORDERS (LINES ONLY) AND DISTANCES
@@ -212,8 +222,9 @@ def main():
         ah_line_geoms.append(ah_ru_ml)
     ah_border_lines = unary_union(ah_line_geoms) if ah_line_geoms else None
 
-    # District centroids (for distances; CRS is metric)
-    centroids = poland_districts.geometry.centroid
+    # ----------------------------------------------------------------------
+    # DISTANCE TO INTERNAL BORDERS (USING CENTROIDS ALREADY COMPUTED)
+    # ----------------------------------------------------------------------
 
     # Initialize distance columns with NaN
     poland_districts["distance_to_german_border"] = np.nan
@@ -261,14 +272,41 @@ def main():
     fig.savefig(FIG_DISTANCES, dpi=300)
     plt.close(fig)
 
-    # Save districts with distance variables (csv)
+    # ----------------------------------------------------------------------
+    # 5. MAP: DISTRICTS COLORED BY PARTITION + RED PARTITION BORDER
+    # ----------------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(10, 10))
+
+    # Three subsets of districts by former partition (based on centroid)
+    german_districts = poland_districts[poland_districts["former_german_partition"]]
+    russian_districts = poland_districts[poland_districts["former_russian_partition"]]
+    ah_districts = poland_districts[poland_districts["former_ah_partition"]]
+
+    # Light/medium/dark grey for AH / Germany / Russia
+    ah_districts.plot(ax=ax, facecolor="#D9D9D9", edgecolor="black", linewidth=0.3, label="Austria-Hungary")
+    german_districts.plot(ax=ax, facecolor="#A6A6A6", edgecolor="black", linewidth=0.3, label="Germany")
+    russian_districts.plot(ax=ax, facecolor="#737373", edgecolor="black", linewidth=0.3, label="Russia")
+
+    # Partition borders in bold red
+    partitions_borders.plot(ax=ax, color="red", linewidth=2.0, label="Partition borders")
+
+    ax.set_title("Districts by former partition with partition borders", fontsize=14)
+    ax.set_axis_off()
+    ax.legend()
+    plt.tight_layout()
+    fig.savefig(FIG_DISTRICTS_PARTITIONS, dpi=300)
+    plt.close(fig)
+
+    # ----------------------------------------------------------------------
+    # 6. Save districts with distance variables and partition flags (CSV)
+    # ----------------------------------------------------------------------
     poland_districts.drop(columns="geometry").to_csv(
         DISTRICTS_WITH_DIST_CSV,
         index=False,
         encoding="utf-8"
     )
-    print(f"Saved districts with distance variables to: {DISTRICTS_WITH_DIST_CSV}")
-    
+    print(f"Saved districts with distance variables and partition flags to: {DISTRICTS_WITH_DIST_CSV}")
+
 
 if __name__ == "__main__":
     main()
