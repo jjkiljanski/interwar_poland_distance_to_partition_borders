@@ -269,7 +269,7 @@ def main():
         ax=axes[0],
         legend=True,
     )
-    axes[0].set_title("Distance to German internal border (km)")
+    axes[0].set_title("Distance to German partition border (km)")
     axes[0].set_axis_off()
 
     poland_districts.plot(
@@ -277,7 +277,7 @@ def main():
         ax=axes[1],
         legend=True,
     )
-    axes[1].set_title("Distance to Russian internal border (km)")
+    axes[1].set_title("Distance to Russian partition border (km)")
     axes[1].set_axis_off()
 
     poland_districts.plot(
@@ -285,7 +285,7 @@ def main():
         ax=axes[2],
         legend=True,
     )
-    axes[2].set_title("Distance to Austro-Hungarian internal border (km)")
+    axes[2].set_title("Distance to Austro-Hungarian partition border (km)")
     axes[2].set_axis_off()
 
     plt.tight_layout()
