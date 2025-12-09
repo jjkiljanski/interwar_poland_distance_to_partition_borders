@@ -2,9 +2,9 @@
 
 This repository provides a simple Python workflow for researchers who need **the borders of the Austrian, German, and Russian partitions within interwar Poland**.
 
-![Partition borders](output/districts_partitions.png)
+![Partition borders](output/districts_partitions.png?v=2)
 
-![Distances to partition borders](output/distances_to_borders.png)
+![Distances to partition borders](output/distances_to_borders.png?v=2)
 
 The repo includes:
 
